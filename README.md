@@ -1,0 +1,2 @@
+# bulock_breaker_game
+ジェミニで作成したブロック崩しゲーム
