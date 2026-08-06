@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Block Breaker Mobile</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      background-color: #0a0a0f;
+      color: #ffffff;
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+      touch-action: none; /* スマホのスクロールを防止 */
+    }
+    canvas {
+      background-color: #0a0a0f;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+      max-width: 100vw;
+      max-height: 100vh;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const SCREEN_WIDTH = 800;
+const SCREEN_HEIGHT = 600;
+
+// カラー定義
+const BLOCK_COLORS = ["#ef5350", "#ffa726", "#ffee58", "#66bb6a", "#26c6da"];
+const ITEM_TYPES = {
+  WIDE: { color: "#26c6da", label: "W" },
+  SLOW: { color: "#66bb6a", label: "S" },
+  PENETRATE: { color: "#ef5350", label: "P" },
+  MULTI: { color: "#ab47bc", label: "M" }
+};
+
+class Ball {
+  constructor(x, y, dx, dy) {
+    this.x = x;
+    this.y = y;
+    this.dx = dx;
+    this.dy = dy;
+    this.radius = 8;
+  }
+
+  update(speedFactor) {
+    this.x += this.dx * speedFactor;
+    this.y += this.dy * speedFactor;
+  }
+}
+
+class Item {
+  constructor(x, y, type) {
+    this.x = x - 12;
+    this.y = y - 12;
+    this.width = 24;
+    this.height = 24;
+    this.type = type;
+    this.speed = 3;
+  }
+
+  update() {
+    this.y += this.speed;
+  }
+}
+
+class BlockBreaker {
+  constructor() {
+    this.basePaddleWidth = 120;
+    this.paddleHeight = 15;
+    this.paddleY = SCREEN_HEIGHT - 50;
+    this.paddleSpeed = 8;
+
+    this.cols = 10;
+    this.rows = 5;
+    this.blockWidth = 70;
+    this.blockHeight = 20;
+    this.blockPadding = 8;
+    this.blockOffsetTop = 60;
+    this.blockOffsetLeft = (SCREEN_WIDTH - (this.cols * (this.blockWidth + this.blockPadding))) / 2;
+
+    this.resetGame();
+  }
+
+  resetGame() {
+    this.paddleWidth = this.basePaddleWidth;
+    this.paddleX = (SCREEN_WIDTH - this.paddleWidth) / 2;
+
+    this.balls = [new Ball(SCREEN_WIDTH / 2, this.paddleY - 10, 5, -5)];
+
+    this.wideTimer = 0;
+    this.slowTimer = 0;
+    this.penetrateTimer = 0;
+
+    this.items = [];
+    this.blocks = [];
+    this.initBlocks();
+
+    this.score = 0;
+    this.gameOver = false;
+    this.gameClear = false;
+  }
+
+  initBlocks() {
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        let bx = this.blockOffsetLeft + c * (this.blockWidth + this.blockPadding);
+        let by = this.blockOffsetTop + r * (this.blockHeight + this.blockPadding);
+        let color = BLOCK_COLORS[r % BLOCK_COLORS.length];
+        this.blocks.push({ x: bx, y: by, w: this.blockWidth, h: this.blockHeight, color: color });
+      }
+    }
+  }
+
+  spawnMultiBalls() {
+    let newBalls = [];
+    this.balls.forEach(b => {
+      newBalls.push(new Ball(b.x, b.y, -Math.abs(b.dx) - 1, -Math.abs(b.dy)));
+      newBalls.push(new Ball(b.x, b.y, Math.abs(b.dx) + 1, -Math.abs(b.dy)));
+    });
+    this.balls.push(...newBalls);
+  }
+
+  applyItem(type) {
+    if (type === "WIDE") {
+      this.wideTimer = 600;
+      this.paddleWidth = 180;
+    } else if (type === "SLOW") {
+      this.slowTimer = 600;
+    } else if (type === "PENETRATE") {
+      this.penetrateTimer = 400;
+    } else if (type === "MULTI") {
+      this.spawnMultiBalls();
+    }
+  }
+
+  updateTimers() {
+    if (this.wideTimer > 0) {
+      this.wideTimer--;
+      if (this.wideTimer === 0) this.paddleWidth = this.basePaddleWidth;
+    }
+    if (this.slowTimer > 0) this.slowTimer--;
+    if (this.penetrateTimer > 0) this.penetrateTimer--;
+  }
+
+  update(keys, touchX) {
+    if (this.gameOver || this.gameClear) return;
+
+    this.updateTimers();
+
+    // パドル移動（キーボード OR タッチ）
+    if (touchX !== null) {
+      this.paddleX = touchX - this.paddleWidth / 2;
+    } else {
+      if (keys["ArrowLeft"] && this.paddleX > 0) this.paddleX -= this.paddleSpeed;
+      if (keys["ArrowRight"] && this.paddleX < SCREEN_WIDTH - this.paddleWidth) this.paddleX += this.paddleSpeed;
+    }
+
+    // パドルの端制限
+    if (this.paddleX < 0) this.paddleX = 0;
+    if (this.paddleX > SCREEN_WIDTH - this.paddleWidth) this.paddleX = SCREEN_WIDTH - this.paddleWidth;
+
+    let speedFactor = this.slowTimer > 0 ? 0.5 : 1.0;
+
+    // ボール処理
+    for (let i = this.balls.length - 1; i >= 0; i--) {
+      let b = this.balls[i];
+      b.update(speedFactor);
+
+      // 壁判定
+      if (b.x - b.radius <= 0 || b.x + b.radius >= SCREEN_WIDTH) b.dx *= -1;
+      if (b.y - b.radius <= 0) b.dy *= -1;
+
+      // 落下
+      if (b.y - b.radius >= SCREEN_HEIGHT) {
+        this.balls.splice(i, 1);
+        continue;
+      }
+
+      // パドル判定
+      if (
+        b.y + b.radius >= this.paddleY &&
+        b.y - b.radius <= this.paddleY + this.paddleHeight &&
+        b.x >= this.paddleX &&
+        b.x <= this.paddleX + this.paddleWidth &&
+        b.dy > 0
+      ) {
+        b.dy *= -1;
+        let paddleCenter = this.paddleX + this.paddleWidth / 2;
+        let hitPos = (b.x - paddleCenter) / (this.paddleWidth / 2);
+        b.dx = hitPos * 7;
+      }
+
+      // ブロック判定
+      for (let j = this.blocks.length - 1; j >= 0; j--) {
+        let block = this.blocks[j];
+        if (
+          b.x + b.radius >= block.x &&
+          b.x - b.radius <= block.x + block.w &&
+          b.y + b.radius >= block.y &&
+          b.y - b.radius <= block.y + block.h
+        ) {
+          this.blocks.splice(j, 1);
+          this.score += 10;
+
+          if (this.penetrateTimer === 0) b.dy *= -1;
+
+          // アイテムドロップ (35%)
+          if (Math.random() < 0.35) {
+            let types = Object.keys(ITEM_TYPES);
+            let selectedType = types[Math.floor(Math.random() * types.length)];
+            this.items.push(new Item(block.x + block.w / 2, block.y + block.h / 2, selectedType));
+          }
+
+          if (this.penetrateTimer === 0) break;
+        }
+      }
+    }
+
+    if (this.balls.length === 0) this.gameOver = true;
+
+    // アイテム処理
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      let item = this.items[i];
+      item.update();
+
+      // キャッチ判定
+      if (
+        item.y + item.height >= this.paddleY &&
+        item.x + item.width >= this.paddleX &&
+        item.x <= this.paddleX + this.paddleWidth
+      ) {
+        this.applyItem(item.type);
+        this.items.splice(i, 1);
+      } else if (item.y > SCREEN_HEIGHT) {
+        this.items.splice(i, 1);
+      }
+    }
+
+    if (this.blocks.length === 0) this.gameClear = true;
+  }
+
+  draw() {
+    ctx.clearRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    // ブロック描画
+    this.blocks.forEach(b => {
+      ctx.fillStyle = b.color;
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+    });
+
+    // パドル描画
+    ctx.fillStyle = this.wideTimer > 0 ? "#26c6da" : "#ffffff";
+    ctx.fillRect(this.paddleX, this.paddleY, this.paddleWidth, this.paddleHeight);
+
+    // ボール描画
+    ctx.fillStyle = this.penetrateTimer > 0 ? "#ef5350" : "#26c6da";
+    this.balls.forEach(b => {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // アイテム描画
+    this.items.forEach(item => {
+      let info = ITEM_TYPES[item.type];
+      ctx.fillStyle = info.color;
+      ctx.fillRect(item.x, item.y, item.width, item.height);
+      ctx.fillStyle = "#000000";
+      ctx.font = "bold 14px Arial";
+      ctx.fillText(info.label, item.x + 6, item.y + 17);
+    });
+
+    // UI表示
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "20px Arial";
+    ctx.fillText(`Score: ${this.score}`, 20, 30);
+
+    ctx.fillStyle = "#ab47bc";
+    ctx.fillText(`Balls: ${this.balls.length}`, 140, 30);
+
+    let statusText = "";
+    if (this.wideTimer > 0) statusText += "[WIDE] ";
+    if (this.slowTimer > 0) statusText += "[SLOW] ";
+    if (this.penetrateTimer > 0) statusText += "[PENETRATE] ";
+
+    if (statusText) {
+      ctx.fillStyle = "#ffee58";
+      ctx.fillText(`EFFECTS: ${statusText}`, 260, 30);
+    }
+
+    // ゲームオーバー / クリア表示
+    if (this.gameOver || this.gameClear) {
+      ctx.textAlign = "center";
+      ctx.font = "bold 40px Arial";
+      ctx.fillStyle = this.gameOver ? "#ef5350" : "#66bb6a";
+      ctx.fillText(this.gameOver ? "GAME OVER" : "GAME CLEAR!", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 20);
+
+      ctx.font = "20px Arial";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText("TAP SCREEN OR PRESS 'R' TO RESTART", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 30);
+      ctx.textAlign = "left";
+    }
+  }
+}
+
+// --- イベント制御 ---
+const game = new BlockBreaker();
+const keys = {};
+let touchX = null;
+
+window.addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if ((game.gameOver || game.gameClear) && e.code === "KeyR") {
+    game.resetGame();
+  }
+});
+
+window.addEventListener("keyup", e => {
+  keys[e.code] = false;
+});
+
+// スマホタッチ操作対応
+function updateTouchPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = SCREEN_WIDTH / rect.width;
+  const touch = e.touches[0];
+  if (touch) {
+    touchX = (touch.clientX - rect.left) * scaleX;
+  }
+}
+
+canvas.addEventListener("touchstart", e => {
+  if (game.gameOver || game.gameClear) {
+    game.resetGame();
+  } else {
+    updateTouchPos(e);
+  }
+});
+
+canvas.addEventListener("touchmove", e => {
+  if (!game.gameOver && !game.gameClear) {
+    updateTouchPos(e);
+  }
+});
+
+canvas.addEventListener("touchend", () => {
+  touchX = null;
+});
+
+// ループ処理
+function gameLoop() {
+  game.update(keys, touchX);
+  game.draw();
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>
